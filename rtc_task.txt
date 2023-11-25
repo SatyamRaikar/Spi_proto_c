@@ -1,0 +1,222 @@
+
+// PIC16F877A Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG
+#pragma config FOSC = EXTRC     // Oscillator Selection bits (RC oscillator)
+#pragma config WDTE = OFF        // Watchdog Timer Enable bit (WDT enabled)
+#pragma config PWRTE = OFF      // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOREN = OFF       // Brown-out Reset Enable bit (BOR enabled)
+#pragma config LVP = OFF         // Low-Voltage (Single-Supply) In-Circuit Serial Programming Enable bit (RB3/PGM pin has PGM function; low-voltage programming enabled)
+#pragma config CPD = OFF        // Data EEPROM Memory Code Protection bit (Data EEPROM code protection off)
+#pragma config WRT = OFF        // Flash Program Memory Write Enable bits (Write protection off; all program memory may be written to by EECON control)
+#pragma config CP = OFF         // Flash Program Memory Code Protection bit (Code protection off)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+#include <xc.h>
+#define _XTAL_FREQ 20000000
+void Lcd_init();   //Lcd initialization function
+void Lcd_command(unsigned char );  
+void Lcd_data(unsigned char);
+unsigned char sec=45,min=59,hour=11,date=22,month=11,year=23,msg1[5]={"TIME:"},msg2[5]={"DATE:"};
+void set_time();
+void i2c_start();
+void i2c_stop();
+void i2c_wait();
+void i2c_repeatedstart();
+void update();
+void i2c_write(unsigned char);
+unsigned char inspect(unsigned char);
+unsigned char check;   //if check=1 then it is PM or otherwise it is AM
+unsigned char dec_2_bcd(unsigned char k);
+unsigned char bcd_2_dec(unsigned char k);
+unsigned char i2c_read(unsigned char);
+void i2c_init(const unsigned long);
+unsigned char sec1,sec2,min1,min2,hour1,hour2,date1,date2,month1,month2,year1,year2,s[2]={"PM"},p[2]={"AM"};
+void main(){
+    Lcd_init();  // Lcd initializing
+    i2c_init(10000);  //initializing i2c 
+    set_time();   //setting initial value
+    while(1){
+        update();   //raed values from specific register to update time
+        sec1=sec%10;  // ones place of second
+        sec2=sec/10;   //tenth place of second
+        min1=min%10;  // ones place of min
+        min2=min/10;  //tenth place of min
+        hour1=hour%10;    // ones place of hour
+        hour2=hour/10; //tenth place of hour
+        date1=date%10;    // ones place of date
+        date2=date/10; //tenth place of date
+        month1=month%10;     // ones place of month
+        month2=month/10; //tenth place of month
+        year1=year%10;    // ones place of year
+        year2=year/10;  //tenth place of year
+        
+        Lcd_command(0x80);
+        for(unsigned char i=0;i<5;i++){
+            Lcd_data(msg1[i]);    //printing TIME: at 0x80 position
+        }
+        Lcd_data(hour2 +'0');    //printing tenth place of hour
+        Lcd_data(hour1 +'0'); //printing ones place of hour
+        Lcd_data(58);     //printing double colon
+        Lcd_data(min2 +'0');   //printing tenth place of min
+        Lcd_data(min1 +'0'); //printing ones place of min
+        Lcd_data(58);      //printing double colon
+        Lcd_data(sec2 +'0');    //printing tenth place of sec
+        Lcd_data(sec1 +'0');    //printing tenth place of sec
+        Lcd_data(0x20);
+        if(check==1){
+            for(unsigned char i=0;i<2;i++)  //printing AM or PM
+                Lcd_data(s[i]);
+        }
+        else{
+            for(unsigned char i=0;i<2;i++)
+            Lcd_data(p[i]);
+        }
+
+        Lcd_command(0xC0);
+        for(unsigned char i=0;i<5;i++){
+            Lcd_data(msg2[i]);  //printing DATE: at 0xC0 position
+        }
+        Lcd_data(date2 +'0');   //printing tenth place of date
+        Lcd_data(date1 +'0');  //printing ones place of date
+        Lcd_data(47);     //printing /
+        Lcd_data(month2 +'0');  //printing tenth place of month
+        Lcd_data(month1 +'0'); //printing ones place of month
+        Lcd_data(47);  //printing /
+        Lcd_data(year2 +'0'); //printing tenth place of year
+        Lcd_data(year1 +'0'); //printing ones place of year
+        __delay_ms(500);
+    }
+}
+
+void Lcd_init(){
+    TRISD=0x00;  // configuring all pins as output pins
+    TRISC=0x18;   //configuring 4th and 3rd bit input and rest as output
+    PORTD=0x00;   
+    Lcd_command(0x38);  //according to datasheet
+    __delay_ms(5);
+    Lcd_command(0x38);  //according to datasheet
+    __delay_ms(5);
+    Lcd_command(0x38);  //according to datasheet
+    __delay_ms(5);
+    Lcd_command(0x38); //according to datasheet
+    __delay_ms(5);
+    Lcd_command(0x06);   //incrementing address counter from left to right
+    __delay_ms(5);
+    Lcd_command(0x0C);    //display on cursor off
+    __delay_ms(5);
+    Lcd_command(0x01);   //clear display
+    __delay_ms(5);   
+}
+
+void Lcd_command(unsigned char k){
+    PORTC&=~0x02;   //RS=0 for command 2nd pin is used to give input to LCD RS pin
+    PORTD=k;
+    PORTC|=0x01;    //EN=1
+    PORTC&=~0x01;    //EN=0
+    __delay_ms(5);
+}
+
+void Lcd_data(unsigned char k){
+    PORTC|=0x02;   //RS=1 for command 2nd pin is used to give input to LCD RS pin
+    PORTD=k;
+    PORTC|=0x01;    //EN=1
+    PORTC&=~0x01;    //EN=0
+    __delay_ms(5);
+}
+
+void i2c_init(const unsigned long k){
+    SSPCON=0x28;  // enable SPEN
+    SSPCON2=0x00; 
+    SSPSTAT=0x00;
+    SSPADD=(_XTAL_FREQ/((4*k)+1));  
+}
+
+void i2c_wait(){
+    while(SSPSTAT&0x04 || SSPCON2&0x1F);  //waiting till any read or write instruction is executing
+}
+
+void i2c_start(){
+    i2c_wait();  //waiting 
+    SEN=1;
+}
+
+void i2c_stop(){
+    i2c_wait();
+    PEN=1;
+}
+
+void i2c_repeatedstart(){
+    i2c_wait();
+    RSEN=1;
+}
+
+void i2c_write(unsigned char k){
+    i2c_wait();
+    SSPBUF=k;
+}
+
+unsigned char i2c_read(unsigned char ack){
+    unsigned char value;
+    i2c_wait();
+    RCEN=1;
+    i2c_wait();
+    value=SSPBUF;
+    i2c_wait();
+    ACKDT=(ack)?0:1;
+    ACKEN=1;  //enabling transmitting of acknowledgement 
+    return value;  //returns the value of SSPBUF stored in value
+}
+
+unsigned char dec_2_bcd(unsigned char k){
+   unsigned char value;
+   value=(k%10)+((k/10)<<4);  //converting decimal to binary coded decimal
+   return value;
+}
+
+unsigned char inspect(unsigned char k){
+    unsigned char value;
+    check=(k & 0x20)?1:0;   //checking weather 5h bit is 1 or zero if 1 considered as PM
+    value=(k&0x1F);   // making value according to 12hors
+    return value;
+}
+
+unsigned char bcd_2_dec(unsigned char k){
+    unsigned char value;
+    value = (((k>>4)*10)+(k&0x0F));  //converting binary coded decimal to decimal
+    return value;
+}
+
+void set_time(){
+    i2c_start();  //sending start bit
+    i2c_write(0xD0);   //sending slave address
+    i2c_write(0);  //sending register address
+    i2c_write(dec_2_bcd(sec));  //sending data of seconds
+    i2c_write(dec_2_bcd(min));  //sending data of minutes
+    i2c_write(dec_2_bcd(0x47));  //0x47 is decimal equivalent of 71
+    i2c_write(1);  //sending day
+    i2c_write(dec_2_bcd(date));  //sending date
+    i2c_write(dec_2_bcd(month)); //sending month
+    i2c_write(dec_2_bcd(year));  //sending year
+    i2c_stop();   //sending stop
+}
+
+void update(){
+    i2c_start();  //sending start
+    i2c_write(0xD0);  // sending slave address
+    i2c_write(0);   //sending register address
+    i2c_repeatedstart();  //sending repeated start
+    i2c_write(0xD1);  //sending slave address with read operation
+    sec=bcd_2_dec(i2c_read(1));  //reading seconds data
+    min=bcd_2_dec(i2c_read(1));  //reading minutes data
+    hour=bcd_2_dec(inspect(i2c_read(1)));  //reading minutes data
+    ((i2c_read(1)));  //reading day data
+    date=bcd_2_dec(i2c_read(1));  //reading date data
+    month=bcd_2_dec(i2c_read(1));  //reading month data
+    year=bcd_2_dec(i2c_read(0));   //reading years data
+    i2c_stop();  //sending stop bit
+}
